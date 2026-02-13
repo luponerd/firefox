@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Container Launcher Pro - Power User Edition</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        body {
+            background-color: #0f111a;
+            background-image: radial-gradient(circle at top right, #1a1c2e, #0f111a);
+        }
+        input[type='number']::-webkit-inner-spin-button,
+        input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type='number'] { -moz-appearance: textfield; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
+
+        const CONFIG_STORAGE_KEY = 'container_launcher_pro_configs';
+        const STATE_STORAGE_KEY = 'container_launcher_pro_states';
+        const URL_KEY = 'container_launcher_pro_url';
+
+        const darkenColor = (hex, percent) => {
+            let [r, g, b] = hex.match(/\w\w/g).map(x => parseInt(x, 16));
+            r = Math.floor(r * (1 - percent / 100));
+            g = Math.floor(g * (1 - percent / 100));
+            b = Math.floor(b * (1 - percent / 100));
+            return "#" + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+        };
+
+        const ContainerCard = ({ config, state, onUpdate, onLaunch, isGloballyPaused }) => {
+            const [timeLeft, setTimeLeft] = useState(null);
+            const [hasLaunched, setHasLaunched] = useState(false);
+            const [isHovered, setIsHovered] = useState(false);
+
+            useEffect(() => {
+                let timer;
+                if (state.isActive && !hasLaunched && !isGloballyPaused) {
+                    if (timeLeft === null) setTimeLeft(state.seconds);
+                    else if (timeLeft > 0) {
+                        timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+                    } else {
+                        onLaunch();
+                        setHasLaunched(true);
+                        setTimeLeft(0);
+                    }
+                } else if (!state.isActive) {
+                    setTimeLeft(null);
+                }
+                return () => clearInterval(timer);
+            }, [state.isActive, timeLeft, state.seconds, onLaunch, hasLaunched, isGloballyPaused]);
+
+            const handleManualLaunch = () => onLaunch();
+            
+            const buttonStyle = {
+                backgroundColor: isHovered ? darkenColor(config.color, 15) : config.color,
+                transition: 'background-color 0.2s ease-in-out'
+            };
+
+            return (
+                <div className={`bg-[#1a1c2e] border ${hasLaunched ? 'border-emerald-500/30' : 'border-slate-800'} rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl transition-all hover:border-indigo-500/30`}>
+                    <button onClick={handleManualLaunch} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)} style={buttonStyle} className={`px-6 py-2.5 rounded-lg font-bold text-white text-xs uppercase tracking-widest transition-transform active:scale-95 min-w-[140px] shadow-lg shadow-black/20 flex items-center justify-center gap-2`}>
+                        {hasLaunched && <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>}
+                        {config.name}
+                    </button>
+                    <div className="flex items-center gap-5 bg-black/20 px-4 py-2 rounded-lg border border-white/5 w-full sm:w-auto justify-between sm:justify-start">
+                        <label className="flex items-center gap-2 cursor-pointer group">
+                            <input type="checkbox" checked={state.isActive} onChange={(e) => onUpdate(config.id, { ...state, isActive: e.target.checked })} className="w-4 h-4 rounded border-slate-700 text-indigo-500 bg-slate-900 focus:ring-0" disabled={hasLaunched} />
+                            <span className={`text-[10px] font-bold ${hasLaunched ? 'text-emerald-500' : 'text-slate-500'} group-hover:text-slate-300 transition-colors uppercase`}>{hasLaunched ? 'Completato' : 'Auto'}</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <input type="number" value={state.seconds} onChange={(e) => onUpdate(config.id, { ...state, seconds: Math.max(1, parseInt(e.target.value) || 1) })} min="1" disabled={hasLaunched} className="w-12 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-xs text-center text-indigo-400 focus:outline-none focus:border-indigo-500 disabled:opacity-50" />
+                            <span className="text-[10px] text-slate-600 font-bold uppercase">Sec</span>
+                        </div>
+                        <div className="min-w-[40px] text-right">
+                            <span className={`font-mono font-bold text-lg ${hasLaunched ? 'text-emerald-400' : 'text-indigo-400'}`}>{hasLaunched ? 'OK' : (timeLeft !== null ? `${timeLeft}s` : '--')}</span>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ManagementModal = ({ initialConfigs, onSave, onClose }) => {
+            const [editableConfigs, setEditableConfigs] = useState(initialConfigs);
+            const handleUpdate = (index, field, value) => setEditableConfigs(prev => prev.map((c, i) => i === index ? { ...c, [field]: value } : c));
+            const handleAdd = () => setEditableConfigs(prev => [...prev, { id: 'config_' + Date.now(), name: 'Nuovo Container', color: '#5c5f66' }]);
+            const handleDelete = (index) => setEditableConfigs(prev => prev.filter((_, i) => i !== index));
+
+            return (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-[#1a1c2e] border border-slate-800 rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
+                        <header className="p-4 border-b border-slate-800 flex justify-between items-center"><h2 className="text-lg font-bold text-white">Gestisci Container</h2><button onClick={onClose} className="text-slate-500 hover:text-white">&times;</button></header>
+                        <main className="p-6 space-y-4 overflow-y-auto">
+                            {editableConfigs.map((config, index) => (
+                                <div key={config.id} className="flex items-center gap-3 bg-black/20 p-3 rounded-lg border border-slate-700/50">
+                                    <input type="color" value={config.color} onChange={(e) => handleUpdate(index, 'color', e.target.value)} className="w-10 h-10 rounded-md bg-transparent border-none cursor-pointer" />
+                                    <input type="text" value={config.name} onChange={(e) => handleUpdate(index, 'name', e.target.value)} placeholder="Nome Container" className="flex-grow bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                                    <button onClick={() => handleDelete(index)} className="text-slate-500 hover:text-red-500 p-2 rounded-full transition-colors"><svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg></button>
+                                </div>
+                            ))}
+                             <button onClick={handleAdd} className="w-full mt-2 text-indigo-400 border-2 border-dashed border-indigo-400/30 py-2 rounded-lg hover:bg-indigo-400/10 transition-colors text-sm font-bold">+ Aggiungi Nuovo Container</button>
+                        </main>
+                        <footer className="p-4 border-t border-slate-800 flex justify-end gap-3 bg-black/10">
+                            <button onClick={onClose} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-300 bg-slate-700 hover:bg-slate-600 transition-colors">Annulla</button>
+                            <button onClick={() => onSave(editableConfigs)} className="px-4 py-2 rounded-lg text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-500 transition-colors">Salva Modifiche</button>
+                        </footer>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [configs, setConfigs] = useState([]);
+            const [containerStates, setContainerStates] = useState({});
+            const [globalUrl, setGlobalUrl] = useState('');
+            const [initialized, setInitialized] = useState(false);
+            const [isModalOpen, setIsModalOpen] = useState(false);
+            const [isGloballyPaused, setIsGloballyPaused] = useState(false);
+            const [importUrl, setImportUrl] = useState('');
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                const savedUrl = localStorage.getItem(URL_KEY) || 'https://www.google.com';
+                const savedConfigsRaw = localStorage.getItem(CONFIG_STORAGE_KEY);
+                let loadedConfigs = savedConfigsRaw ? JSON.parse(savedConfigsRaw) : [
+                    { id: 'personal_1', name: 'Personal', color: '#3b82f6' }, { id: 'work_1', name: 'Work', color: '#f97316' },
+                    { id: 'banking_1', name: 'Banking', color: '#10b981' }, { id: 'shopping_1', name: 'Shopping', color: '#ec4899' }
+                ];
+                setConfigs(loadedConfigs);
+
+                const savedStates = JSON.parse(localStorage.getItem(STATE_STORAGE_KEY) || '{}');
+                const initialStates = {};
+                loadedConfigs.forEach(c => { initialStates[c.id] = savedStates[c.id] || { isActive: false, seconds: 5 }; });
+                setContainerStates(initialStates);
+                setGlobalUrl(savedUrl);
+                setInitialized(true);
+            }, []);
+
+            useEffect(() => {
+                if (initialized) {
+                    localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(configs));
+                    localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(containerStates));
+                    localStorage.setItem(URL_KEY, globalUrl);
+                }
+            }, [configs, containerStates, globalUrl, initialized]);
+
+            const handleLaunch = useCallback((name) => {
+                const targetUrl = globalUrl.trim() || 'https://www.google.com';
+                const firefoxUrl = `ext+container:name=${encodeURIComponent(name)}&url=${encodeURIComponent(targetUrl)}`;
+                const link = document.createElement('a');
+                link.href = firefoxUrl;
+                link.target = '_blank';
+                link.click();
+            }, [globalUrl]);
+            
+            const handleSaveConfigs = (newConfigs) => {
+                const newStates = {};
+                newConfigs.forEach(config => { newStates[config.id] = containerStates[config.id] || { isActive: false, seconds: 5 }; });
+                setContainerStates(newStates);
+                setConfigs(newConfigs);
+                setIsModalOpen(false);
+            };
+
+            const applyImportedData = (data) => {
+                if (data && data.globalUrl && data.configs && data.containerStates) {
+                    setGlobalUrl(data.globalUrl);
+                    setConfigs(data.configs);
+                    setContainerStates(data.containerStates);
+                    alert('Configurazione importata con successo!');
+                } else {
+                    alert('Errore: Il file JSON non ha la struttura corretta.');
+                }
+            };
+
+            const handleExport = () => {
+                const exportData = { globalUrl, configs, containerStates };
+                const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(exportData, null, 2))}`;
+                const link = document.createElement('a');
+                link.href = jsonString;
+                link.download = 'container-pro-backup.json';
+                link.click();
+            };
+
+            const handleFileImport = (event) => {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        applyImportedData(data);
+                    } catch (error) {
+                        alert('Errore: Impossibile leggere il file. Assicurati che sia un JSON valido.');
+                    }
+                };
+                reader.readAsText(file);
+                event.target.value = null; // Reset input
+            };
+
+            const handleImportFromUrl = async () => {
+                if (!importUrl.trim()) {
+                    alert('Per favore, inserisci un URL.');
+                    return;
+                }
+                try {
+                    const response = await fetch(importUrl);
+                    if (!response.ok) throw new Error(`Network response was not ok: ${response.statusText}`);
+                    const data = await response.json();
+                    applyImportedData(data);
+                    setImportUrl('');
+                } catch (error) {
+                    alert(`Importazione fallita: ${error.message}. Controlla l'URL e la connessione.`);
+                }
+            };
+
+            if (!initialized) return null;
+
+            return (
+                <div className="min-h-screen py-10 px-4 flex flex-col items-center">
+                    {isModalOpen && <ManagementModal initialConfigs={configs} onSave={handleSaveConfigs} onClose={() => setIsModalOpen(false)} />}
+                    <header className="text-center mb-10">
+                        <h1 className="text-3xl font-black tracking-tighter text-white mb-2">CONTAINER <span className="text-indigo-500 italic">PRO</span></h1>
+                        <div className="h-1 w-12 bg-indigo-500 mx-auto rounded-full opacity-50"></div>
+                    </header>
+
+                    <main className="w-full max-w-xl space-y-6">
+                        <section className="bg-[#1a1c2e] border border-indigo-500/20 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500"></div>
+                            <div className="flex flex-col gap-4">
+                                <h2 className="text-[11px] font-black text-indigo-400 uppercase tracking-[0.2em]">Destinazione Globale</h2>
+                                <input type="url" value={globalUrl} onChange={(e) => setGlobalUrl(e.target.value)} placeholder="Es: https://www.github.com" className="w-full bg-black/40 border border-slate-700 rounded-xl px-4 py-3 text-slate-200 focus:outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all font-mono text-sm" />
+                            </div>
+                        </section>
+                        
+                        <section className="bg-[#1a1c2e] border border-slate-800 rounded-2xl p-4 space-y-4">
+                            <div className="flex flex-wrap items-center justify-center gap-3">
+                                <button onClick={() => setIsModalOpen(true)} className="bg-slate-800/80 border border-slate-700 text-slate-300 text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-lg hover:bg-slate-700/80 hover:border-slate-600 transition-all">Gestisci</button>
+                                <button onClick={() => setIsGloballyPaused(!isGloballyPaused)} className={`text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-lg border transition-all ${isGloballyPaused ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20' : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'}`}>
+                                    {isGloballyPaused ? '▶ Riprendi Timer' : '❚❚ Pausa Timer'}
+                                </button>
+                            </div>
+                            <div className="border-t border-slate-800 my-4"></div>
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <input type="url" value={importUrl} onChange={(e) => setImportUrl(e.target.value)} placeholder="Importa da URL..." className="flex-grow bg-slate-900/70 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-indigo-500" />
+                                <button onClick={handleImportFromUrl} className="bg-indigo-600 text-white text-xs font-bold uppercase px-4 py-2 rounded-lg hover:bg-indigo-500 transition-colors">Carica</button>
+                            </div>
+                            <div className="flex flex-wrap items-center justify-center gap-3 text-xs">
+                                <button onClick={() => fileInputRef.current.click()} className="text-slate-400 hover:text-white transition-colors">Importa da File</button>
+                                <input type="file" ref={fileInputRef} onChange={handleFileImport} accept=".json" className="hidden" />
+                                <span className="text-slate-600">|</span>
+                                <button onClick={handleExport} className="text-slate-400 hover:text-white transition-colors">Esporta Configurazione</button>
+                            </div>
+                        </section>
+
+                        <div className="space-y-3">
+                            {configs.map(config => (
+                                <ContainerCard key={config.id} config={config} state={containerStates[config.id]} onLaunch={() => handleLaunch(config.name)} onUpdate={(id, newState) => setContainerStates(prev => ({ ...prev, [id]: newState }))} isGloballyPaused={isGloballyPaused} />
+                            ))}
+                        </div>
+
+                        <footer className="mt-16 text-center">
+                            <button onClick={() => window.location.reload()} className="text-[9px] text-indigo-400 border border-indigo-400/30 px-3 py-1 rounded hover:bg-indigo-400/10 transition-colors uppercase font-bold tracking-tighter">Riavvia Sessione (F5)</button>
+                        </footer>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
